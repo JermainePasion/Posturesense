@@ -4,7 +4,7 @@ const fs = require('fs');
 const app = express();
 const PORT = 3000;
 
-const ESP8266_IP = 'http://192.168.100.47'; // Replace with your actual ESP8266 IP
+const ESP8266_IP = '192.168.100.63'; // Replace with your actual ESP8266 IP
 
 let baseline = -1;
 

@@ -1,53 +1,122 @@
 const express = require('express');
-const axios = require('axios');
+const cors = require('cors');
 const fs = require('fs');
+const path = require('path');
+const createCsvWriter = require('csv-writer').createObjectCsvWriter;
+
 const app = express();
 const PORT = 3000;
 
-const ESP8266_IP = '192.168.100.63'; // Replace with your actual ESP8266 IP
-
-let baseline = -1;
-
-// Allow JSON parsing and CORS
+// To allow React Native to connect
+app.use(cors());
 app.use(express.json());
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*'); // 👈 Required for mobile
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST');
-  next();
+
+// ----------------------------
+// CSV CONFIG
+// ----------------------------
+
+const csvFilePath = path.join(__dirname, 'posture_log.csv');
+
+// Initialize CSV Writer
+const csvWriter = createCsvWriter({
+  path: csvFilePath,
+  header: [
+    { id: 'timestamp', title: 'timestamp' },
+    { id: 'mean_angleY', title: 'mean_angleY' },
+    { id: 'mean_angleZ', title: 'mean_angleZ' },
+    { id: 'mean_flexAngle', title: 'mean_flexAngle' },
+    { id: 'min_flexAngle', title: 'min_flexAngle' },
+    { id: 'max_flexAngle', title: 'max_flexAngle' },
+  ],
+  append: fs.existsSync(csvFilePath),
 });
 
-app.get('/read', async (req, res) => {
-  try {
-    const response = await axios.get(`${ESP8266_IP}/read`);
-    res.send(response.data);
-  } catch (error) {
-    res.status(500).send('❌ Failed to fetch from ESP8266');
+// ----------------------------
+// DATA BUFFER
+// ----------------------------
+
+let postureBuffer = [];   // stores readings every second
+let lastWriteTime = Date.now();
+
+// ----------------------------
+// ROUTES
+// ----------------------------
+
+// ESP will POST data here every second
+app.post('/log', (req, res) => {
+  const { angleY, angleZ, flexAngle } = req.body;
+
+  postureBuffer.push({
+    angleY,
+    angleZ,
+    flexAngle,
+  });
+
+  // Check if it's time to write averages
+  const now = Date.now();
+  if (now - lastWriteTime >= 60 * 1000) {
+    logAverageToCSV();
+    lastWriteTime = now;
+  }
+
+  res.json({ message: 'Logged!' });
+});
+
+// Fetch all logs if you want (optional)
+app.get('/logs', (req, res) => {
+  if (fs.existsSync(csvFilePath)) {
+    const data = fs.readFileSync(csvFilePath, 'utf-8');
+    res.type('text/csv').send(data);
+  } else {
+    res.send('No logs yet.');
   }
 });
 
-app.get('/set_baseline', (req, res) => {
-  const value = req.query.value;
-  if (!value) return res.status(400).json({ error: 'Missing value' });
+// ----------------------------
+// LOG AVERAGE FUNCTION
+// ----------------------------
 
-  baseline = parseInt(value);
-  res.json({ baseline });
-});
+function logAverageToCSV() {
+  if (postureBuffer.length === 0) {
+    console.log('No data to log.');
+    return;
+  }
 
-app.get('/get_baseline', (req, res) => {
-  res.json({ baseline });
-});
+  const mean_angleY = average(postureBuffer.map(d => d.angleY));
+  const mean_angleZ = average(postureBuffer.map(d => d.angleZ));
+  const mean_flex = average(postureBuffer.map(d => d.flexAngle));
+  const min_flex = Math.min(...postureBuffer.map(d => d.flexAngle));
+  const max_flex = Math.max(...postureBuffer.map(d => d.flexAngle));
 
-app.get('/log', (req, res) => {
-  const { value, label } = req.query;
-  if (!value || !label) return res.status(400).json({ error: 'Missing data' });
+  const timestamp = new Date().toISOString();
 
-  const row = `${Date.now()},${value},${label}\n`;
-  fs.appendFile('posture_data.csv', row, err => {
-    if (err) return res.status(500).json({ error: 'Failed to log' });
-    res.json({ status: 'logged', value, label });
-  });
-});
+  csvWriter
+    .writeRecords([
+      {
+        timestamp,
+        mean_angleY: round(mean_angleY, 2),
+        mean_angleZ: round(mean_angleZ, 2),
+        mean_flexAngle: round(mean_flex, 1),
+        min_flexAngle: round(min_flex, 1),
+        max_flexAngle: round(max_flex, 1),
+      },
+    ])
+    .then(() => {
+      console.log(`✅ Logged posture data at ${timestamp}`);
+    });
+
+  postureBuffer = [];
+}
+
+function average(arr) {
+  if (arr.length === 0) return 0;
+  return arr.reduce((sum, val) => sum + val, 0) / arr.length;
+}
+
+function round(val, decimals) {
+  return Number(val.toFixed(decimals));
+}
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`Server listening on port ${PORT}`);
 });

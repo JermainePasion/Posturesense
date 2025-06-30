@@ -1,3 +1,5 @@
+// HomeStack.js
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -9,15 +11,13 @@ import {
 } from 'react-native';
 import axios from 'axios';
 
-import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-
 import StickFigureScreen from './StickFigureScreen';
 
-const Stack = createNativeStackNavigator();
-
 const ESP_IP = '192.168.100.66';
-const BACKEND_IP = '192.168.100.8'; // <--- CHANGE THIS to your backend
+const BACKEND_IP = '192.168.100.8';
+
+const Stack = createNativeStackNavigator();
 
 function HomeScreen({ navigation }) {
   const [data, setData] = useState(null);
@@ -25,13 +25,11 @@ function HomeScreen({ navigation }) {
 
   const fetchSensorData = async () => {
     try {
-      // Fetch sensor data from ESP
       const response = await axios.get(`http://${ESP_IP}/read`);
       const json = response.data;
 
       setData(json);
 
-      // Send data to backend for logging
       await axios.post(`http://${BACKEND_IP}:3000/log`, {
         angleY: json.angleY,
         angleZ: json.angleZ,
@@ -89,14 +87,7 @@ function HomeScreen({ navigation }) {
             <Button title="Set Baseline" onPress={handleSetBaseline} />
           </View>
 
-          <Button
-            title="See Stick Figure"
-            onPress={() => {
-              navigation.navigate('StickFigure', {
-                flexAngle: data.flexAngle,
-              });
-            }}
-          />
+          
         </>
       ) : (
         <Text style={styles.loading}>Loading data...</Text>
@@ -105,18 +96,16 @@ function HomeScreen({ navigation }) {
   );
 }
 
-export default function App() {
+export default function HomeStack() {
   return (
-    <NavigationContainer>
-      <Stack.Navigator initialRouteName="Home">
-        <Stack.Screen name="Home" component={HomeScreen} />
-        <Stack.Screen
-          name="StickFigure"
-          component={StickFigureScreen}
-          options={{ title: 'Stick Figure View' }}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <Stack.Navigator>
+      <Stack.Screen name="HomeMain" component={HomeScreen} options={{ title: 'Home' }} />
+      <Stack.Screen
+        name="StickFigure"
+        component={StickFigureScreen}
+        options={{ title: 'Stick Figure View' }}
+      />
+    </Stack.Navigator>
   );
 }
 

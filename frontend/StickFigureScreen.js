@@ -1,21 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  Alert,
-  ScrollView,
-  PermissionsAndroid,
-  Platform,
-} from 'react-native';
-import { BleManager } from 'react-native-ble-plx';
-import { Buffer } from 'buffer';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, Alert, ScrollView } from 'react-native';
+import axios from 'axios';
 
-const ESP_DEVICE_NAME = 'ESP32_Posture';
-const SERVICE_UUID = '12345678-1234-1234-1234-1234567890ab';
-const UUID_ANGLE_Y = 'abcd1234-0001-1000-8000-00805f9b34fb';
-const UUID_ANGLE_Z = 'abcd1234-0002-1000-8000-00805f9b34fb';
-const UUID_FLEX_ANGLE = 'abcd1234-0003-1000-8000-00805f9b34fb';
+const USE_MOCK = false;
+
+const ESP_IP = '192.168.100.66';
 
 export default function StickFigureScreen() {
   const [flexAngle, setFlexAngle] = useState(0);
@@ -25,144 +14,69 @@ export default function StickFigureScreen() {
   const [flexColor, setFlexColor] = useState('gray');
   const [yColor, setYColor] = useState('gray');
   const [zColor, setZColor] = useState('gray');
-  const [connected, setConnected] = useState(false);
 
-  const bleManager = new BleManager();
+  const fetchData = async () => {
+    let json = null;
 
-  useEffect(() => {
-    const connectBLE = async () => {
+    if (USE_MOCK) {
+      // Provide mock data
+      json = {
+        flexAngle: Math.random() * 45,          // between 0 - 45 degrees
+        angleY: (Math.random() - 0.5) * 70,     // between -35 to +35
+        angleZ: (Math.random() - 0.5) * 40      // between -20 to +20
+      };
+      console.log("[MOCK] Data fetched:", json);
+    } else {
       try {
-        if (Platform.OS === 'android') {
-          const granted = await PermissionsAndroid.request(
-            PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-            {
-              title: 'Bluetooth Permission',
-              message: 'This app requires Bluetooth to connect to ESP32.',
-              buttonNeutral: 'Ask Me Later',
-              buttonNegative: 'Cancel',
-              buttonPositive: 'OK',
-            }
-          );
-          if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-            Alert.alert('Permission denied for Bluetooth');
-            return;
-          }
-        }
-
-        bleManager.startDeviceScan(null, null, (error, device) => {
-          if (error) {
-            console.log('BLE Scan error:', error);
-            return;
-          }
-
-          if (device?.name === ESP_DEVICE_NAME) {
-            console.log('✅ Found ESP32:', device.name);
-            bleManager.stopDeviceScan();
-
-            device
-              .connect()
-              .then((d) => {
-                console.log('✅ Connected to device:', d.name);
-                setConnected(true);
-                return d.discoverAllServicesAndCharacteristics();
-              })
-              .then((d) => {
-                // Subscribe to angle Y
-                d.monitorCharacteristicForService(
-                  SERVICE_UUID,
-                  UUID_ANGLE_Y,
-                  (error, characteristic) => {
-                    if (error) {
-                      console.log('Angle Y notify error:', error);
-                      return;
-                    }
-                    const val = decodeValue(characteristic.value);
-                    console.log('Angle Y:', val);
-                    setAngleY(val);
-                  }
-                );
-
-                // Subscribe to angle Z
-                d.monitorCharacteristicForService(
-                  SERVICE_UUID,
-                  UUID_ANGLE_Z,
-                  (error, characteristic) => {
-                    if (error) {
-                      console.log('Angle Z notify error:', error);
-                      return;
-                    }
-                    const val = decodeValue(characteristic.value);
-                    console.log('Angle Z:', val);
-                    setAngleZ(val);
-                  }
-                );
-
-                // Subscribe to flex angle
-                d.monitorCharacteristicForService(
-                  SERVICE_UUID,
-                  UUID_FLEX_ANGLE,
-                  (error, characteristic) => {
-                    if (error) {
-                      console.log('Flex notify error:', error);
-                      return;
-                    }
-                    const val = decodeValue(characteristic.value);
-                    console.log('Flex Angle:', val);
-                    setFlexAngle(val);
-                  }
-                );
-              })
-              .catch((err) => {
-                console.log('BLE connect error:', err);
-                Alert.alert('BLE connection error', err.message);
-              });
-          }
-        });
-      } catch (e) {
-        console.log('BLE connection error:', e);
+        const response = await axios.get(`http://${ESP_IP}/read`);
+        json = response.data;
+      } catch (error) {
+        console.error(error);
+        Alert.alert('Error', 'Failed to fetch data from ESP32.');
+        return;
       }
-    };
+    }
 
-    connectBLE();
+    setFlexAngle(json.flexAngle || 0);
+    setAngleY(json.angleY || 0);
+    setAngleZ(json.angleZ || 0);
 
-    return () => {
-      bleManager.destroy();
-    };
-  }, []);
-
-  // Logic for colors
-  useEffect(() => {
-    if (flexAngle <= 15) setFlexColor('green');
-    else if (flexAngle > 15 && flexAngle <= 35) setFlexColor('yellow');
+    // Flex posture
+    const flex = json.flexAngle;
+    if (flex <= 15) setFlexColor('green');
+    else if (flex > 15 && flex <= 35) setFlexColor('yellow');
     else setFlexColor('red');
 
-    if (Math.abs(angleY) <= 35) setYColor('green');
+    // Y posture
+    if (Math.abs(json.angleY) <= 35) setYColor('green');
     else setYColor('red');
 
-    if (Math.abs(angleZ) <= 45) setZColor('green');
+    // Z posture
+    if (Math.abs(json.angleZ) <= 20) setZColor('green');
     else setZColor('red');
-  }, [flexAngle, angleY, angleZ]);
+  };
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 1500);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.header}>
-        {connected ? '✅ BLE Connected' : '🔄 Scanning for ESP32...'}
-      </Text>
-
       {/* Flex stickman */}
       <Text style={styles.title}>Flex Sensor</Text>
       <Text style={styles.value}>
         Flex Angle: {flexAngle?.toFixed(1)}°
       </Text>
-      <StickmanSideways color={flexColor} rotation={flexAngle} />
+      <StickmanSideways
+        color={flexColor}
+        rotation={flexAngle}
+      />
       <Text style={styles.statusText}>
-        {flexColor === 'green'
-          ? 'Good posture!'
-          : flexColor === 'yellow'
-          ? 'Slouching'
-          : flexColor === 'red'
-          ? 'Bad posture!'
-          : ''}
+        {flexColor === 'green' ? 'Good posture!' :
+          flexColor === 'yellow' ? 'Slouching' :
+            flexColor === 'red' ? 'Bad posture!' : ''}
       </Text>
 
       {/* Angle Y stickman */}
@@ -170,9 +84,13 @@ export default function StickFigureScreen() {
       <Text style={styles.value}>
         Angle Y: {angleY?.toFixed(1)}°
       </Text>
-      <StickmanSideways color={yColor} rotation={angleY} />
+      <StickmanSideways
+        color={yColor}
+        rotation={angleY}
+      />
       <Text style={styles.statusText}>
-        {yColor === 'green' ? 'Good posture!' : yColor === 'red' ? 'Bad posture!' : ''}
+        {yColor === 'green' ? 'Good posture!' :
+          yColor === 'red' ? 'Bad posture!' : ''}
       </Text>
 
       {/* Angle Z stickman */}
@@ -180,31 +98,39 @@ export default function StickFigureScreen() {
       <Text style={styles.value}>
         Angle Z: {angleZ?.toFixed(1)}°
       </Text>
-      <StickmanSideways color={zColor} rotation={-angleZ} />
+      <StickmanSideways
+        color={zColor}
+        rotation={angleZ}
+      />
       <Text style={styles.statusText}>
-        {zColor === 'green' ? 'Good posture!' : zColor === 'red' ? 'Bad posture!' : ''}
+        {zColor === 'green' ? 'Good posture!' :
+          zColor === 'red' ? 'Bad posture!' : ''}
       </Text>
     </ScrollView>
   );
 }
 
-function decodeValue(base64) {
-  if (!base64) return 0;
-  const decoded = Buffer.from(base64, 'base64').toString('utf-8');
-  return parseFloat(decoded) || 0;
-}
-
+/**
+ * A sideways stickman component
+ * (always drawn sideways, rotation reflects tilt)
+ */
 function StickmanSideways({ color, rotation }) {
   return (
     <View style={styles.figureContainer}>
-      <View
-        style={[
-          styles.stickFigure,
-          { transform: [{ rotate: `${rotation}deg` }] },
-        ]}
-      >
-        <View style={[styles.head, { backgroundColor: color }]} />
-        <View style={[styles.torso, { backgroundColor: color }]} />
+      <View style={[
+        styles.stickFigure,
+        { transform: [{ rotate: `${rotation}deg` }] }
+      ]}>
+        {/* Head (side view) */}
+        <View style={[
+          styles.head,
+          { backgroundColor: color }
+        ]} />
+        {/* Torso (side view) */}
+        <View style={[
+          styles.torso,
+          { backgroundColor: color }
+        ]} />
       </View>
     </View>
   );
@@ -215,10 +141,6 @@ const styles = StyleSheet.create({
     padding: 20,
     alignItems: 'center',
     backgroundColor: '#eef',
-  },
-  header: {
-    fontSize: 18,
-    marginVertical: 10,
   },
   title: {
     fontSize: 20,

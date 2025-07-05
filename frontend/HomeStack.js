@@ -1,5 +1,3 @@
-// HomeStack.js
-
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -8,11 +6,10 @@ import {
   StyleSheet,
   Alert,
   Button,
-  PermissionsAndroid,
-  Platform,
 } from 'react-native';
 import axios from 'axios';
-import { BleManager } from 'react-native-ble-plx';
+
+const USE_MOCK = false;
 
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import StickFigureScreen from './StickFigureScreen';
@@ -20,169 +17,46 @@ import StickFigureScreen from './StickFigureScreen';
 const ESP_IP = '192.168.100.66';
 const BACKEND_IP = '192.168.100.8';
 
-const ESP_DEVICE_NAME = 'ESP32_Posture';
-const SERVICE_UUID = '12345678-1234-1234-1234-1234567890ab';
-const UUID_ANGLE_Y = 'abcd1234-0001-1000-8000-00805f9b34fb';
-const UUID_ANGLE_Z = 'abcd1234-0002-1000-8000-00805f9b34fb';
-const UUID_FLEX_ANGLE = 'abcd1234-0003-1000-8000-00805f9b34fb';
-
 const Stack = createNativeStackNavigator();
 
 function HomeScreen({ navigation }) {
   const [data, setData] = useState(null);
   const [baseline, setBaseline] = useState(null);
-  const [bleStatus, setBleStatus] = useState('Scanning...');
-  const [deviceConnected, setDeviceConnected] = useState(false);
-
-  const bleManager = new BleManager();
-
-  const startBLE = async () => {
-    try {
-      if (Platform.OS === 'android') {
-        const granted = await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        ]);
-
-        const allGranted = Object.values(granted).every(
-          (status) => status === PermissionsAndroid.RESULTS.GRANTED
-        );
-
-        if (!allGranted) {
-          Alert.alert('Bluetooth permission denied.');
-          setBleStatus('Permission denied');
-          return;
-        }
-      }
-
-      setBleStatus('Scanning...');
-
-      bleManager.startDeviceScan(null, null, (error, device) => {
-        if (error) {
-          console.error('BLE scan error:', error);
-          setBleStatus('Scan error');
-          return;
-        }
-
-        if (device?.name === ESP_DEVICE_NAME) {
-          console.log('✅ Found ESP32:', device.name);
-          bleManager.stopDeviceScan();
-          connectToDevice(device);
-        }
-      });
-    } catch (err) {
-      console.error(err);
-      setBleStatus('Error starting BLE');
-    }
-  };
-
-  const connectToDevice = async (device) => {
-    try {
-      const connectedDevice = await device.connect();
-      console.log('✅ Connected to device:', connectedDevice.name);
-      setDeviceConnected(true);
-      setBleStatus('Connected');
-
-      await connectedDevice.discoverAllServicesAndCharacteristics();
-
-      // Subscribe to notifications
-      setupNotifications(connectedDevice);
-    } catch (err) {
-      console.error('Connection error:', err);
-      setBleStatus('Connection failed');
-      Alert.alert('Failed to connect to ESP32 via BLE');
-    }
-  };
-
-  const setupNotifications = async (device) => {
-    try {
-      await device.monitorCharacteristicForService(
-        SERVICE_UUID,
-        UUID_ANGLE_Y,
-        (error, characteristic) => {
-          if (error) {
-            console.error(error);
-            return;
-          }
-          const angleY = parseFloat(decodeBase64(characteristic.value));
-          updateDataField('angleY', angleY);
-        }
-      );
-
-      await device.monitorCharacteristicForService(
-        SERVICE_UUID,
-        UUID_ANGLE_Z,
-        (error, characteristic) => {
-          if (error) {
-            console.error(error);
-            return;
-          }
-          const angleZ = parseFloat(decodeBase64(characteristic.value));
-          updateDataField('angleZ', angleZ);
-        }
-      );
-
-      await device.monitorCharacteristicForService(
-        SERVICE_UUID,
-        UUID_FLEX_ANGLE,
-        (error, characteristic) => {
-          if (error) {
-            console.error(error);
-            return;
-          }
-          const flexAngle = parseFloat(decodeBase64(characteristic.value));
-          updateDataField('flexAngle', flexAngle);
-        }
-      );
-
-      console.log('✅ BLE notifications set up');
-    } catch (err) {
-      console.error(err);
-      setBleStatus('Notification error');
-    }
-  };
-
-  const decodeBase64 = (b64) => {
-    if (!b64) return null;
-    const decoded = Buffer.from(b64, 'base64').toString('utf-8');
-    return decoded;
-  };
-
-  const updateDataField = (field, value) => {
-    setData((prev) => {
-      const updated = { ...(prev || {}), [field]: value };
-
-      // Send to backend every update
-      axios
-        .post(`http://${BACKEND_IP}:3000/log`, {
-          angleY: updated.angleY,
-          angleZ: updated.angleZ,
-          flexAngle: updated.flexAngle,
-        })
-        .catch((err) => console.error('Backend logging error:', err));
-
-      return updated;
-    });
-  };
 
   const fetchSensorData = async () => {
-    try {
-      const response = await axios.get(`http://${ESP_IP}/read`);
-      const json = response.data;
+  if (USE_MOCK) {
+    console.log("⚠️ Using mock sensor data.");
+    const mockData = {
+      angleY: (Math.random() * 60 - 30),   // -30 to +30
+      angleZ: (Math.random() * 40 - 20),   // -20 to +20
+      flexAngle: (Math.random() * 40),     // 0 to 40
+    };
 
-      setData(json);
+    setData(mockData);
 
-      await axios.post(`http://${BACKEND_IP}:3000/log`, {
-        angleY: json.angleY,
-        angleZ: json.angleZ,
-        flexAngle: json.flexAngle,
-      });
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Error', 'Could not fetch data from ESP or send to backend.');
-    }
-  };
+    // Simulate mock backend logging
+    console.log("Mock logging to backend:", mockData);
+
+    return;
+  }
+
+  try {
+    const response = await axios.get(`http://${ESP_IP}/read`);
+    const json = response.data;
+
+    setData(json);
+
+    await axios.post(`http://${BACKEND_IP}:3000/log`, {
+      angleY: json.angleY,
+      angleZ: json.angleZ,
+      flexAngle: json.flexAngle,
+    });
+
+  } catch (error) {
+    console.error(error);
+    Alert.alert('Error', 'Could not fetch data from ESP or send to backend.');
+  }
+};
 
   const handleSetBaseline = () => {
     if (!data) {
@@ -199,23 +73,14 @@ function HomeScreen({ navigation }) {
   };
 
   useEffect(() => {
-    startBLE();
-
-    // Optionally fallback to Wi-Fi polling every 1.5 sec
+    fetchSensorData();
     const interval = setInterval(fetchSensorData, 1500);
-    return () => {
-      clearInterval(interval);
-      bleManager.destroy();
-    };
+    return () => clearInterval(interval);
   }, []);
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.header}>ESP32 Live Posture Monitor (BLE + Wi-Fi)</Text>
-
-      <Text style={{ marginBottom: 10, color: deviceConnected ? 'green' : 'red' }}>
-        BLE Status: {bleStatus}
-      </Text>
+      <Text style={styles.header}>ESP32 Live Posture Monitor</Text>
 
       {data ? (
         <>
@@ -237,6 +102,24 @@ function HomeScreen({ navigation }) {
           <View style={{ marginVertical: 20 }}>
             <Button title="Set Baseline" onPress={handleSetBaseline} />
           </View>
+
+          <View style={{ marginVertical: 10 }}>
+            <Button
+              title="Go to Stick Figure"
+              onPress={() => navigation.navigate('StickFigure')}
+            />
+          </View>
+
+          {baseline && (
+            <View style={{ marginTop: 20 }}>
+              <Text style={{ fontSize: 16 }}>
+                Baseline Set:
+              </Text>
+              <Text style={{ fontFamily: 'monospace' }}>
+                {JSON.stringify(baseline, null, 2)}
+              </Text>
+            </View>
+          )}
         </>
       ) : (
         <Text style={styles.loading}>Loading data...</Text>
@@ -273,7 +156,7 @@ const styles = StyleSheet.create({
   header: {
     fontSize: 26,
     fontWeight: 'bold',
-    marginBottom: 20,
+    marginBottom: 30,
   },
   row: {
     flexDirection: 'row',
